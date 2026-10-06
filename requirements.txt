@@ -1,0 +1,11 @@
+# 22/33 kV Automatic Pole Placement System - runtime dependencies
+# ติดตั้ง: python -m pip install -r requirements.txt
+#
+# เวอร์ชันทดสอบแล้วบน Python 3.14.3 (Windows 11)
+
+# เว็บแอป (app.py)
+Flask==3.1.3
+
+# เรขาคณิต/วางเสา (line_engine.py) และพล็อตแบบ matplotlib (CLI)
+numpy==2.4.2
+matplotlib==3.10.8

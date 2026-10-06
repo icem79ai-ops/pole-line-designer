@@ -1,0 +1,69 @@
+Proprietary License / ลิขสิทธิ์ทรัพย์สินของผู้เขียน
+===================================================
+
+Copyright (c) 2026 icem79ai-ops (ผู้เขียนต้นฉบับ)
+All rights reserved. สงวนสิทธิ์ทุกประการ
+
+English
+-------
+
+This software is made publicly available for viewing and evaluation only.
+
+Permission to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of this software is NOT granted by this license.
+Any such use requires the prior written permission of the copyright holder.
+
+You may:
+  1. View and study the source code.
+  2. Run the software locally to evaluate it for personal, non-commercial
+     purposes.
+  3. Fork the repository on GitHub for private study.
+
+You may NOT, without prior written permission from the copyright holder:
+  1. Use this software, in whole or in part, for any commercial purpose,
+     including delivering its outputs as a paid service.
+  2. Redistribute, sublicense, or sell copies of this software.
+  3. Present the software, or derivatives of it, as your own work.
+  4. Remove this license or the copyright notice from the code.
+
+To request permission, open an issue or contact the copyright holder via
+the repository's GitHub page.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+----------------------------------------------------------------------
+
+ภาษาไทย
+-------
+
+ซอฟต์แวร์นี้เผยแพร่ให้เข้าถึงได้เพื่อการดูศึกษาและทดลองใช้เท่านั้น
+โดยลิขสิทธิ์นี้ **ไม่ได้ให้สิทธิ์** ในการใช้งาน คัดลอก ดัดแปลง รวม ตีพิมพ์
+เผยแพร่ แจกจ่าย ให้สิทธิ์ช่วง หรือขายต่อซอฟต์แวร์นี้
+การใช้งานใด ๆ ต้องได้รับอนุญาตเป็นลายลักษณ์อักษรจากเจ้าของลิขสิทธิ์ก่อน
+
+คุณทำได้:
+  1. ดูและศึกษาซอร์สโค้ด
+  2. รันซอฟต์แวร์บนเครื่องตนเองเพื่อทดลองใช้ส่วนตัว
+     (ไม่แสวงหาผลกำไร)
+  3. Fork repository บน GitHub เพื่อศึกษาส่วนตัว
+
+คุณทำไม่ได้ (หากไม่ได้รับอนุญาตล่วงหน้าเป็นลายลักษณ์อักษร):
+  1. นำซอฟต์แวร์นี้ทั้งหมดหรือบางส่วนไปใช้เพื่อแสวงหาผลกำไร
+     รวมถึงการส่งมอบผลลัพธ์เป็นบริการที่มีค่าใช้จ่าย
+  2. แจกจ่าย ให้สิทธิ์ช่วง หรือขายต่อสำเนาซอฟต์แวร์
+  3. นำเสนอซอฟต์แวร์หรืองานที่ดัดแปลงจากซอฟต์แวร์นี้ว่าเป็นผลงานของตน
+  4. ลบลิขสิทธิ์หรือข้อความประกาศลิขสิทธิ์ออกจากโค้ด
+
+ขออนุญาตได้โดยเปิด issue หรือติดต่อเจ้าของลิขสิทธิ์
+ผ่านหน้า GitHub ของ repository นี้
+
+ซอฟต์แวร์นี้จัดหาให้ "ตามสภาพ" โดยไม่มีการรับประกันใด ๆ
+ไม่ว่าโดยชัดแจ้งหรือโดยนัย รวมถึงแต่ไม่จำกัดเพียงการรับประกัน
+ความสามารถในการจำหน่าย ความเหมาะสมต่อวัตถุประสงค์เฉพาะ
+และการไม่ละเมิดสิทธิของบุคคลภายนอก
