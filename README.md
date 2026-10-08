@@ -5,10 +5,13 @@
 
 | หน้ากาง | ไฟล์ | วิธีใช้ |
 |--------|------|--------|
+| **เว็บสาธิต (GitHub Pages)** | `docs/` | เปิดลิงค์แล้วใช้ได้เลย ไม่ต้องติดตั้ง — เอนจิน Python รันในเบราว์เซอร์ผ่าน Pyodide |
 | Web App (Flask + Canvas) | `app.py` | ลากวางเส้นทางบนผืนผ้าใบ ดูผล/ตรวจสอบ/ส่งออก CSV-PNG |
 | CLI (matplotlib) | `pole_designer.py` | งาน batch บนเครื่อง ไม่ต้องเปิดเบราว์เซอร์ |
 
-แกนการคำนวณทั้งหมดอยู่ที่ `line_engine.py` (ไม่มี logic ซ้ำซ้อนระหว่าง CLI กับเว็บ)
+**ลองใช้ทันที:** https://icem79ai-ops.github.io/pole-line-designer/
+
+แกนการคำนวณทั้งหมดอยู่ที่ `line_engine.py` (ไม่มี logic ซ้ำซ้อนระหว่าง CLI, เว็บ และเว็บสาธิต)
 
 ---
 
@@ -44,6 +47,21 @@ python app.py --host 0.0.0.0 --port 5123    # ให้เครื่องอ�
 - ตารางมาตรฐาน span อ้างอิง
 - ส่งออก **CSV**, **JSON**, **PNG** (ภาพหน้าจอ) และรายงานผล
 - บันทึกงานล่าสุดในเบราว์เซอร์ (localStorage) และเปิดกลับมาได้ภายหลัง
+
+### เว็บสาธิต (GitHub Pages) — ไม่ต้องติดตั้งอะไร
+
+หน้าเว็บเดียวกันนี้ถูก build เป็นไฟล์ static ไว้ใน `docs/` แล้วเสิร์ฟผ่าน GitHub Pages
+โดยเปลี่ยนจาก Flask เป็น **Pyodide** (`web/static/js/pyodide-bridge.js`):
+หน้าเว็บโหลด `line_engine.py` ไปรันในเบราว์เซอร์และตอบ `/api/*` เอง
+
+```bash
+python -X utf8 build_static.py    # build หน้า static ลง docs/ (ใช้ตอนจะ publish)
+python -X utf8 check_static.py    # ทดสอบ E2E ด้วยเบราว์เซอร์จริง (Pyodide boot + ผลเทียบเอนจิน)
+```
+
+- ผลลัพธ์ของ bridge เทียบกับ `line_engine` บนเครื่องแบบทศนิยมเดียวกัน (parity)
+- ค่า CDN ครั้งแรก (~10 MB) ครั้งต่อไปเร็วขึ้นจาก browser cache
+- โหมด Flask ปกติไม่ได้โหลด bridge นี้ จึงไม่กระทบการใช้งานเซิร์ฟเวอร์
 
 ---
 
@@ -178,13 +196,17 @@ Pole-Line-Designer/
 │  ├─ templates/index.html
 │  └─ static/
 │     ├─ css/style.css
-│     └─ js/app.js         Canvas, interaction, API, export, localStorage
+│     ├─ js/app.js         Canvas, interaction, API, export, localStorage
+│     └─ js/pyodide-bridge.js   ตอบ /api/* ในเบราว์เซอร์ (static build เท่านั้น)
+├─ docs/                   build หน้า static สำหรับ GitHub Pages (สร้างด้วย build_static.py)
 ├─ tests/
 │  ├─ test_engine.py       ทดสอบเอนจิน + ตารางมาตรฐาน
 │  └─ test_api.py          ทดสอบ endpoint ทั้งหมด
 ├─ run_tests.py            รันชุดทดสอบทั้งหมด (69 เคส)
 ├─ test_standards.py       ชุด regression 11 กรณี พร้อมตารางผล
 ├─ check_frontend.py       ตรวจหน้าเว็บ (id/payload ครบ + รัน app.js ใน DOM จำลอง)
+├─ build_static.py         build หน้า static ลง docs/ พร้อม self-check
+├─ check_static.py         E2E ทดสอบหน้า static ด้วยเบราว์เซอร์จริง (Pyodide)
 └─ smoke_live.py           ทดสอบ HTTP จริงกับเซิร์ฟเวอร์ที่รันอยู่
 ```
 
@@ -197,6 +219,8 @@ python -X utf8 run_tests.py            # 69 เคส (engine + API)
 python -X utf8 test_standards.py       # regression 11 กรณี พร้อมตารางเทียบ
 python -X utf8 check_frontend.py       # ตรวจหน้าเว็บ 33 รายการ
 python -X utf8 smoke_live.py           # HTTP จริง (ต้องเปิดเซิร์ฟเวอร์ก่อน)
+python -X utf8 check_static.py         # E2E หน้า static + Pyodide (เบราว์เซอร์จริง)
+python -X utf8 check_static.py --url https://icem79ai-ops.github.io/pole-line-designer/   # ทดสอบ URL ที่ publish แล้ว
 ```
 
 `smoke_live.py` ต้องรันคู่กับเซิร์ฟเวอร์:

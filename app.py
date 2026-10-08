@@ -22,66 +22,9 @@ app = Flask(__name__, static_folder="web/static", template_folder="web/templates
 app.json.ensure_ascii = False
 
 
-class BadRequest(Exception):
-    """Raised for invalid client input; converted to HTTP 400 with a message."""
-
-
-@app.errorhandler(BadRequest)
-def _handle_bad_request(err: BadRequest):
-    return jsonify({"error": str(err)}), 400
-
-
 @app.errorhandler(ValueError)
 def _handle_value_error(err: ValueError):
     return jsonify({"error": str(err)}), 400
-
-
-def _parse_request(payload: dict) -> dict:
-    """Validate one design request and return the engine arguments."""
-    if not isinstance(payload, dict):
-        raise BadRequest("body ต้องเป็น JSON object")
-
-    points = payload.get("points")
-    if not isinstance(points, list) or len(points) < 2:
-        raise BadRequest("ต้องส่ง points เป็นรายการพิกัด [[x, y], ...] อย่างน้อย 2 จุด")
-
-    cleaned: list[list[float]] = []
-    for index, point in enumerate(points):
-        if not isinstance(point, (list, tuple)) or len(point) != 2:
-            raise BadRequest(f"points[{index}] ต้องเป็น [x, y]")
-        try:
-            x = float(point[0])
-            y = float(point[1])
-        except (TypeError, ValueError):
-            raise BadRequest(f"points[{index}] ต้องเป็นตัวเลข")
-        cleaned.append([x, y])
-
-    offset_raw = payload.get("offset", engine.ROW_OFFSET)
-    try:
-        offset = float(offset_raw)
-    except (TypeError, ValueError):
-        raise BadRequest("offset ต้องเป็นตัวเลข (เมตร)")
-    if not 0.0 < offset <= 50.0:
-        raise BadRequest("offset ต้องอยู่ระหว่าง 0 (ไม่รวม) ถึง 50 เมตร")
-
-    road_width_raw = payload.get("road_width", engine.ROAD_WIDTH)
-    try:
-        road_width = float(road_width_raw)
-    except (TypeError, ValueError):
-        raise BadRequest("road_width ต้องเป็นตัวเลข (เมตร)")
-    if not 0.0 <= road_width <= 50.0:
-        raise BadRequest("road_width ต้องอยู่ระหว่าง 0 ถึง 50 เมตร")
-
-    use_break = bool(payload.get("use_break_poles", engine.USE_BREAK_POLES))
-    return {
-        "points": cleaned,
-        "offset": offset,
-        "use_break_poles": use_break,
-        "road_width": road_width,
-        "road_clearance": float(
-            payload.get("road_clearance", engine.ROAD_CLEARANCE)
-        ),
-    }
 
 
 @app.get("/")
@@ -102,7 +45,7 @@ def index():
 @app.post("/api/design")
 def api_design():
     payload = request.get_json(silent=True)
-    args = _parse_request(payload or {})
+    args = engine.parse_request(payload or {})
     result = engine.design(
         args["points"],
         offset=args["offset"],
@@ -116,7 +59,7 @@ def api_design():
 @app.post("/api/export/csv")
 def api_export_csv():
     payload = request.get_json(silent=True)
-    args = _parse_request(payload or {})
+    args = engine.parse_request(payload or {})
     result = engine.design(
         args["points"],
         offset=args["offset"],
