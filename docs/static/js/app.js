@@ -36,7 +36,16 @@
     roadWidth: document.getElementById("input-road"),
     filterCode: document.getElementById("filter-code"),
     stdBody: document.querySelector("#std-table tbody"),
-    helpDialog: document.getElementById("help-dialog")
+    helpDialog: document.getElementById("help-dialog"),
+    bgFile: document.getElementById("input-bg-file"),
+    bgPick: document.getElementById("btn-bg-pick"),
+    bgClear: document.getElementById("btn-bg-clear"),
+    bgRef: document.getElementById("input-bg-ref"),
+    bgMeasure: document.getElementById("btn-bg-measure"),
+    bgApply: document.getElementById("btn-bg-apply"),
+    bgOpacity: document.getElementById("input-bg-opacity"),
+    bgReadout: document.getElementById("bg-readout"),
+    bgError: document.getElementById("bg-error")
   };
 
   const state = {
@@ -47,7 +56,11 @@
     dragging: false,
     dragLast: null,
     showPoles: true,
-    finished: false
+    finished: false,
+    bg: null,        // { image, w, h, metersW, origin[x,y], opacity, locked }
+    calib: null,     // { a: worldXY | null, mouse: worldXY | null }
+    bgDragging: false,
+    bgDragLast: null
   };
 
   /* --------------------------------------------------------------- utils */
@@ -147,7 +160,7 @@
     }
     const tl = screenToWorld(0, 0);
     const br = screenToWorld(rect.width, rect.height);
-    ctx.strokeStyle = "rgba(120,140,175,0.13)";
+    ctx.strokeStyle = state.bg ? "rgba(120,140,175,0.30)" : "rgba(120,140,175,0.13)";
     ctx.lineWidth = 1;
     for (let x = Math.floor(tl[0] / step) * step; x <= br[0]; x += step) {
       const a = worldToScreen([x, 0]), b = worldToScreen([x, 0]);
@@ -177,7 +190,7 @@
       if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
     });
     ctx.closePath();
-    ctx.fillStyle = "#39424f";
+    ctx.fillStyle = state.bg ? "rgba(57,66,79,0.55)" : "#39424f";
     ctx.fill();
     ctx.strokeStyle = "#5b6675";
     ctx.lineWidth = 1;
@@ -304,11 +317,262 @@
     ctx.fillText(line2, s.x, s.y + dy + (up ? 11 : -11));
   }
 
+  /* ------------------------------------------------- background map image */
+  function bgMpp() {
+    return state.bg ? state.bg.metersW / state.bg.w : 0;
+  }
+
+  function bgPixelFromWorld(w) {
+    const mpp = bgMpp();
+    return [(w[0] - state.bg.origin[0]) / mpp, (state.bg.origin[1] - w[1]) / mpp];
+  }
+
+  function showBgError(message) {
+    el.bgError.textContent = message || "";
+    el.bgError.hidden = !message;
+  }
+
+  function syncBgUi() {
+    const has = !!state.bg;
+    el.bgClear.disabled = !has;
+    el.bgMeasure.disabled = !has;
+    el.bgApply.disabled = !has;
+  }
+
+  function renderBgReadout() {
+    const bg = state.bg;
+    if (!bg) {
+      el.bgReadout.textContent = "ยังไม่ได้วางภาพพื้นหลัง";
+      return;
+    }
+    el.bgReadout.innerHTML = "อัตราส่วน <strong>" + fmt(bg.metersW / bg.w, 4) +
+      " ม./พิกเซล</strong>" + (bg.locked ? " · ใช้งานแล้ว" : " · ยังไม่ได้กดใช้");
+  }
+
+  function drawBg() {
+    const bg = state.bg;
+    if (!bg) return;
+    const mpp = bgMpp();
+    const tl = worldToScreen(bg.origin);
+    const br = worldToScreen([bg.origin[0] + bg.w * mpp, bg.origin[1] - bg.h * mpp]);
+    ctx.save();
+    ctx.globalAlpha = bg.opacity;
+    ctx.drawImage(bg.image, tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    ctx.restore();
+  }
+
+  function drawCalibOverlay() {
+    const c = state.calib;
+    if (!c || !c.a) return;
+    const a = worldToScreen(c.a);
+    const m = c.mouse ? worldToScreen(c.mouse) : null;
+    ctx.save();
+    ctx.strokeStyle = "#7ee787";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    if (m) ctx.lineTo(m.x, m.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#7ee787";
+    ctx.beginPath(); ctx.arc(a.x, a.y, 4, 0, Math.PI * 2); ctx.fill();
+    if (m) {
+      ctx.beginPath(); ctx.arc(m.x, m.y, 4, 0, Math.PI * 2); ctx.fill();
+      const ref = parseFloat(el.bgRef.value);
+      const text = fmt(Math.hypot(m.x - a.x, m.y - a.y), 1) + " px" +
+        (ref > 0 ? " = " + fmt(ref, 1) + " m" : "");
+      ctx.font = "11px Consolas, monospace";
+      ctx.textAlign = "left";
+      const labelW = ctx.measureText(text).width + 10;
+      const mx = (a.x + m.x) / 2, my = (a.y + m.y) / 2;
+      ctx.fillStyle = "rgba(10,16,28,0.85)";
+      ctx.fillRect(mx - labelW / 2, my - 24, labelW, 17);
+      ctx.fillStyle = "#7ee787";
+      ctx.fillText(text, mx - labelW / 2 + 5, my - 12);
+    }
+    ctx.restore();
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    document.querySelectorAll(".btn-mode").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.mode === mode);
+    });
+    canvas.classList.toggle("mode-pan", mode === "pan");
+    canvas.classList.toggle("mode-bg", mode === "bg");
+    canvas.classList.toggle("mode-measure", mode === "bg" && !!state.calib);
+  }
+
+  function loadBgFile(file) {
+    if (!file || String(file.type).indexOf("image/") !== 0) {
+      showBgError("รองรับเฉพาะไฟล์รูปภาพ (PNG / JPG / WebP)");
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = function () {
+      const maxDim = 2048;
+      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      let source = img;
+      if (scale < 1) {
+        const cv = document.createElement("canvas");
+        cv.width = w;
+        cv.height = h;
+        cv.getContext("2d").drawImage(img, 0, 0, w, h);
+        source = cv;
+      }
+      URL.revokeObjectURL(url);
+      placeBg(source, w, h);
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      showBgError("อ่านไฟล์ภาพไม่สำเร็จ");
+    };
+    img.src = url;
+  }
+
+  function placeBg(image, w, h) {
+    const rect = canvas.getBoundingClientRect();
+    const metersW = Math.max(0.1, (0.8 * rect.width) / state.view.scale);
+    const mpp = metersW / w;
+    const centre = screenToWorld(rect.width / 2, rect.height / 2);
+    state.bg = {
+      image: image,
+      w: w,
+      h: h,
+      metersW: metersW,
+      origin: [centre[0] - metersW / 2, centre[1] + (h * mpp) / 2],
+      opacity: parseFloat(el.bgOpacity.value) || 0.6,
+      locked: false
+    };
+    state.calib = null;
+    showBgError("");
+    setMode("bg");
+    syncBgUi();
+    renderBgReadout();
+    setStatus("วางภาพแล้ว — วัดระยะอ้างอิง แล้วกด 'ใช้ภาพนี้'", "pill-idle");
+    draw();
+  }
+
+  function clearBg() {
+    state.bg = null;
+    state.calib = null;
+    el.bgMeasure.textContent = "วัดระยะอ้างอิง";
+    showBgError("");
+    setMode("draw");
+    syncBgUi();
+    renderBgReadout();
+    setStatus("ลบภาพพื้นหลังแล้ว", "pill-idle");
+    draw();
+  }
+
+  function startCalib() {
+    if (!state.bg) { showBgError("ยังไม่มีภาพพื้นหลัง"); return; }
+    showBgError("");
+    state.calib = { a: null, mouse: null };
+    setMode("bg");
+    el.bgMeasure.textContent = "กำลังวัด... (คลิกขวา / Esc ยกเลิก)";
+    setStatus("วัดระยะอ้างอิง: คลิกจุดแรกบนภาพ", "pill-busy");
+    draw();
+  }
+
+  function cancelCalib() {
+    if (!state.calib) return;
+    state.calib = null;
+    el.bgMeasure.textContent = "วัดระยะอ้างอิง";
+    setMode(state.mode);
+    setStatus("ยกเลิกการวัดระยะแล้ว", "pill-idle");
+    draw();
+  }
+
+  function handleCalibClick(world, pos) {
+    const bg = state.bg;
+    const c = state.calib;
+    const px = bgPixelFromWorld(world);
+    if (px[0] < 0 || px[0] > bg.w || px[1] < 0 || px[1] > bg.h) {
+      showBgError("คลิกบนภาพพื้นหลังเท่านั้น");
+      return;
+    }
+    if (!c.a) {
+      c.a = [world[0], world[1]];
+      setStatus("วัดระยะอ้างอิง: คลิกจุดที่สอง", "pill-busy");
+      draw();
+      return;
+    }
+    const a = worldToScreen(c.a);
+    const dPx = Math.hypot(pos.x - a.x, pos.y - a.y);
+    if (dPx < 10) {
+      showBgError("สองจุดห่างกันน้อยเกินไป (ต้องอย่างน้อย 10 พิกเซล)");
+      return;
+    }
+    const ref = parseFloat(el.bgRef.value);
+    if (!(ref > 0)) {
+      showBgError("กรอก 'ระยะอ้างอิง' เป็นตัวเลขมากกว่า 0");
+      return;
+    }
+    const dW = Math.hypot(world[0] - c.a[0], world[1] - c.a[1]);
+    if (!(dW > 0)) {
+      showBgError("ระยะระหว่างจุดเป็นศูนย์");
+      return;
+    }
+    const f = ref / dW;
+    const newMetersW = bg.metersW * f;
+    if (!(newMetersW >= 0.1 && newMetersW <= 100000)) {
+      showBgError("อัตราส่วนที่ได้อยู่นอกช่วงที่ยอมรับ (0.1 - 100,000 ม.)");
+      return;
+    }
+    bg.origin = [
+      c.a[0] + (bg.origin[0] - c.a[0]) * f,
+      c.a[1] + (bg.origin[1] - c.a[1]) * f
+    ];
+    bg.metersW = newMetersW;
+    state.calib = null;
+    el.bgMeasure.textContent = "วัดระยะอ้างอิง";
+    showBgError("");
+    setMode("bg");
+    syncBgUi();
+    renderBgReadout();
+    setStatus("วัดระยะแล้ว — กด 'ใช้ภาพนี้' เพื่อเริ่มปักแนว", "pill-ok");
+    draw();
+  }
+
+  function scaleBgAt(factor, cx, cy) {
+    const bg = state.bg;
+    if (!bg) return;
+    const newMetersW = bg.metersW * factor;
+    if (!(newMetersW >= 0.1 && newMetersW <= 100000)) return;
+    const anchor = screenToWorld(cx, cy);
+    bg.metersW = newMetersW;
+    bg.origin = [
+      anchor[0] + (bg.origin[0] - anchor[0]) * factor,
+      anchor[1] + (bg.origin[1] - anchor[1]) * factor
+    ];
+    renderBgReadout();
+    draw();
+  }
+
+  function applyBg() {
+    if (!state.bg) return;
+    if (state.calib) cancelCalib();
+    state.bg.locked = true;
+    setMode("draw");
+    syncBgUi();
+    renderBgReadout();
+    showBgError("");
+    setStatus("ใช้ภาพพื้นหลังแล้ว — ปักแนวถนนได้เลย", "pill-ok");
+    draw();
+  }
+
   function draw() {
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.fillStyle = "#0b0f18";
     ctx.fillRect(0, 0, rect.width, rect.height);
+
+    drawBg();
 
     if (el.showGrid.checked) drawGrid();
 
@@ -357,6 +621,8 @@
       }
       if (el.showLabels.checked) poles.forEach(drawPoleLabel);
     }
+
+    if (state.calib) drawCalibOverlay();
   }
 
   /* ------------------------------------------------------------ UI tables */
@@ -637,9 +903,21 @@
 
   canvas.addEventListener("mousedown", function (event) {
     const pos = pointerPosition(event);
+    if (state.calib) {
+      if (event.button === 2) { cancelCalib(); return; }
+      if (event.button !== 0) return;
+      handleCalibClick(screenToWorld(pos.x, pos.y), pos);
+      return;
+    }
     if (event.button === 2) {
       state.finished = true;
       setStatus("จบแนวทางแล้ว (" + state.points.length + " จุด)", "pill-idle");
+      return;
+    }
+    if (state.mode === "bg" && state.bg && event.button === 0) {
+      state.bgDragging = true;
+      state.bgDragLast = pos;
+      canvas.classList.add("dragging");
       return;
     }
     if (state.mode === "pan" || event.button === 1) {
@@ -663,6 +941,16 @@
     const pos = pointerPosition(event);
     const world = screenToWorld(pos.x, pos.y);
     el.cursor.textContent = "X: " + fmt(world[0], 2) + " m   Y: " + fmt(world[1], 2) + " m";
+    if (state.calib) {
+      state.calib.mouse = world;
+      draw();
+    }
+    if (state.bgDragging && state.bgDragLast && state.bg) {
+      state.bg.origin[0] += (pos.x - state.bgDragLast.x) / state.view.scale;
+      state.bg.origin[1] -= (pos.y - state.bgDragLast.y) / state.view.scale;
+      state.bgDragLast = pos;
+      draw();
+    }
     if (state.dragging && state.dragLast) {
       state.view.tx += pos.x - state.dragLast.x;
       state.view.ty += pos.y - state.dragLast.y;
@@ -674,12 +962,18 @@
   window.addEventListener("mouseup", function () {
     state.dragging = false;
     state.dragLast = null;
+    state.bgDragging = false;
+    state.bgDragLast = null;
     canvas.classList.remove("dragging");
   });
 
   canvas.addEventListener("wheel", function (event) {
     event.preventDefault();
     const pos = pointerPosition(event);
+    if (state.mode === "bg" && state.bg && !state.calib) {
+      scaleBgAt(event.deltaY < 0 ? 1.12 : 1 / 1.12, pos.x, pos.y);
+      return;
+    }
     zoomAt(event.deltaY < 0 ? 1.12 : 1 / 1.12, pos.x, pos.y);
   }, { passive: false });
 
@@ -699,6 +993,7 @@
       renderChecks();
       draw();
     } else if (event.key === "Escape") {
+      if (state.calib) { cancelCalib(); return; }
       state.points = [];
       state.design = null;
       state.finished = false;
@@ -742,10 +1037,12 @@
   /* ---------------------------------------------------------- init/ wiring */
   document.querySelectorAll(".btn-mode").forEach(function (button) {
     button.addEventListener("click", function () {
-      document.querySelectorAll(".btn-mode").forEach(function (b) { b.classList.remove("active"); });
-      button.classList.add("active");
-      state.mode = button.dataset.mode;
-      canvas.classList.toggle("mode-pan", state.mode === "pan");
+      const mode = button.dataset.mode;
+      if (mode === "bg" && !state.bg) {
+        showBgError("ยังไม่มีภาพพื้นหลัง — กด 'วางภาพ...' ก่อน");
+        return;
+      }
+      setMode(mode);
     });
   });
 
@@ -817,6 +1114,57 @@
     if (state.points.length >= 2 && state.finished) runDesign();
   });
 
+  /* ------------------------------------------------- background image UI */
+  el.bgPick.addEventListener("click", function () { el.bgFile.click(); });
+  el.bgFile.addEventListener("change", function () {
+    const file = el.bgFile.files && el.bgFile.files[0];
+    if (file) loadBgFile(file);
+    el.bgFile.value = "";
+  });
+  el.bgClear.addEventListener("click", clearBg);
+  el.bgMeasure.addEventListener("click", startCalib);
+  el.bgApply.addEventListener("click", applyBg);
+  el.bgOpacity.addEventListener("input", function () {
+    if (!state.bg) return;
+    state.bg.opacity = parseFloat(el.bgOpacity.value) || 0.6;
+    draw();
+  });
+
+  document.addEventListener("paste", function (event) {
+    const items = event.clipboardData && event.clipboardData.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type && items[i].type.indexOf("image/") === 0) {
+        event.preventDefault();
+        loadBgFile(items[i].getAsFile());
+        return;
+      }
+    }
+  });
+
+  canvas.addEventListener("dragover", function (event) { event.preventDefault(); });
+  canvas.addEventListener("drop", function (event) {
+    event.preventDefault();
+    const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+    if (file) loadBgFile(file);
+  });
+
+  window.__BG_DEBUG__ = function () {
+    const bg = state.bg;
+    return {
+      has: !!bg,
+      w: bg ? bg.w : 0,
+      h: bg ? bg.h : 0,
+      metersW: bg ? bg.metersW : 0,
+      origin: bg ? [bg.origin[0], bg.origin[1]] : [0, 0],
+      opacity: bg ? bg.opacity : 0,
+      locked: bg ? !!bg.locked : false,
+      mode: state.mode,
+      calibrating: !!state.calib,
+      view: { scale: state.view.scale, tx: state.view.tx, ty: state.view.ty }
+    };
+  };
+
   window.addEventListener("resize", resizeCanvas);
 
   fetch("/api/standards")
@@ -839,6 +1187,8 @@
   renderStats();
   renderPoleTable();
   renderChecks();
+  syncBgUi();
+  renderBgReadout();
   resizeCanvas();
   fitView();
   loadProject(true);

@@ -24,6 +24,30 @@
 <main class="layout">
   <aside class="panel panel-left">
     <section class="card">
+      <h2>พื้นหลังแผนที่ (ไม่บังคับ)</h2>
+      <p class="hint">ครอบตัดภาพดาวเทียมจากแผนที่ก่อนวาง (Paste / ลากวาง / เลือกไฟล์) แล้ววัดระยะอ้างอิงให้ตรงตาราง 10 ม.</p>
+      <input type="file" id="input-bg-file" accept="image/png,image/jpeg,image/webp" hidden>
+      <div class="btn-grid">
+        <button type="button" id="btn-bg-pick" class="btn">วางภาพ...</button>
+        <button type="button" id="btn-bg-clear" class="btn" disabled>ลบภาพ</button>
+      </div>
+      <label class="field">
+        <span>ระยะอ้างอิงบนภาพ (เมตร) — ช่วงที่รู้ระยะจริง</span>
+        <input type="number" id="input-bg-ref" min="1" max="10000" step="1" value="50">
+      </label>
+      <div class="btn-grid">
+        <button type="button" id="btn-bg-measure" class="btn" disabled>วัดระยะอ้างอิง</button>
+        <button type="button" id="btn-bg-apply" class="btn btn-primary" disabled>ใช้ภาพนี้</button>
+      </div>
+      <label class="field">
+        <span>ความโปร่งแสงภาพ</span>
+        <input type="range" id="input-bg-opacity" min="0.2" max="1" step="0.05" value="0.6">
+      </label>
+      <div id="bg-readout" class="bg-readout">ยังไม่ได้วางภาพพื้นหลัง</div>
+      <div id="bg-error" class="error-box" hidden></div>
+    </section>
+
+    <section class="card">
       <h2>1. กำหนดแนวเส้นทาง</h2>
       <p class="hint">เลือกโหมดแล้วคลิกซ้ายบนผืนภาพเพื่อปักจุด ถอยหลังได้ด้วยคีย์ <kbd>Backspace</kbd></p>
       <div class="mode-row">
@@ -32,6 +56,9 @@
         </button>
         <button type="button" class="btn btn-mode" data-mode="pan">
           <strong>เลื่อนภาพ</strong><small>ลากเมาส์เพื่อเลื่อน</small>
+        </button>
+        <button type="button" class="btn btn-mode" data-mode="bg">
+          <strong>ปรับภาพ</strong><small>ลาก=เลื่อน ล้อ=ยืดหด</small>
         </button>
       </div>
       <div class="btn-grid">
@@ -173,6 +200,9 @@
 <dialog id="help-dialog">
   <h2>วิธีใช้งาน</h2>
   <ol>
+    <li>(ไม่บังคับ) วางภาพแผนที่ดาวเทียมเป็นพื้นหลัง แล้วกด <strong>วัดระยะอ้างอิง</strong>
+        คลิก 2 จุดบนช่วงที่รู้ระยะจริง ระบบจะยืดภาพให้ตรงตาราง 10 ม. — หรือใช้โหมด
+        <strong>ปรับภาพ</strong> ลาก=เลื่อน ล้อเมาส์=ยืด/หด กด <strong>ใช้ภาพนี้</strong> เพื่อล็อก</li>
     <li>เลือกโหมด <strong>ปักแนวถนน</strong> แล้วคลิกซ้ายทีละจุดตามแนวเส้นกลางถนน (คลิกขวาหรือกด <kbd>Enter</kbd> เพื่อจบ)</li>
     <li>กด <kbd>Backspace</kbd> เพื่อลบจุดล่าสุด, <kbd>Ctrl+Z</kbd> ทำเหมือนกัน</li>
     <li>ตั้งระยะ Offset และความกว้างเขตทาง แล้วกด <strong>ออกแบบและวางเสา</strong>

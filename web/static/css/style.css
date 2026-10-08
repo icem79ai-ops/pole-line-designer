@@ -136,6 +136,8 @@ kbd {
 #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
 #canvas.mode-pan { cursor: grab; }
 #canvas.mode-pan.dragging { cursor: grabbing; }
+#canvas.mode-bg { cursor: move; }
+#canvas.mode-measure { cursor: crosshair; }
 
 .canvas-toolbar {
   position: absolute;
@@ -261,6 +263,27 @@ kbd {
 .error-box { background: rgba(215,58,73,.14); border: 1px solid #d73a49; color: #ff9ba3; }
 .warn-box { background: rgba(191,135,0,.14); border: 1px solid #bf8700; color: #f0c674; }
 .warn-box ul { margin: 4px 0 0; padding-left: 18px; }
+
+.bg-readout {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #0c1220;
+  border: 1px solid var(--line-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  word-break: break-word;
+}
+.bg-readout strong { color: var(--text); font-family: Consolas, monospace; }
+
+.field input[type="range"] {
+  width: 100%;
+  padding: 0;
+  accent-color: var(--accent);
+  background: transparent;
+  border: none;
+}
 
 /* ------------------------------------------------------------- tables */
 .point-list-wrap { margin-top: 10px; }
