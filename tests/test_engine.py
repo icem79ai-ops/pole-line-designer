@@ -274,7 +274,8 @@ class TestRoadClearance(unittest.TestCase):
 
 
 class TestGuyDirection(unittest.TestCase):
-    """The anchor has to oppose the real wire pull, not ``heading + 180``."""
+    """The anchor runs parallel to the R.O.W. behind the pole, never across
+    the carriageway."""
 
     BEND = [(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (150.0, 50.0)]
 
@@ -293,15 +294,37 @@ class TestGuyDirection(unittest.TestCase):
         self.assertAlmostEqual(first["gy_angle"], 180.0, places=6)
         self.assertLess(first["gy_anchor_x"], first["x"])
 
-    def test_ba_pole_is_guyed_and_points_outside_the_bend(self):
+    def test_ba_pole_guy_parallel_to_row_and_off_the_road(self):
         r = engine.design(self.BEND)
         bas = [p for p in r.poles if p["code"] == "ba"]
         self.assertTrue(bas, msg="a 90 deg bend needs BA poles")
         ba = bas[0]
         self.assertTrue(ba["gy"])
         self.assertIsNotNone(ba["gy_anchor_x"])
-        # the bend turns left (north), so the outside of the corner is south
-        self.assertLess(ba["gy_anchor_y"], ba["y"])
+        # the guy must be parallel to one of the two adjacent R.O.W. runs --
+        # at a bend the R.O.W. carries on into the shorter adjoining run, so
+        # the guy points toward that neighbour -- never the old resultant that
+        # sent the anchor of an inside-of-bend pole across the road.
+        idx = [p["id"] for p in r.poles].index(ba["id"])
+        expected = []
+        for j in (idx - 1, idx + 1):
+            if 0 <= j < len(r.poles):
+                q = r.poles[j]
+                expected.append(
+                    math.degrees(math.atan2(q["y"] - ba["y"], q["x"] - ba["x"])) % 360.0
+                )
+        actual = ba["gy_angle"] % 360.0
+        matching = [
+            e_ for e_ in expected if abs(((actual - e_ + 180.0) % 360.0) - 180.0) < 1e-6
+        ]
+        self.assertTrue(matching, msg=f"guy {actual:.1f} not parallel to either run {expected}")
+        # the anchor must stay at least as far from the road as the pole
+        poly = engine.Polyline(self.BEND)
+        d_anchor = engine._dist_to_polyline(
+            poly, ba["gy_anchor_x"], ba["gy_anchor_y"]
+        )
+        d_pole = engine._dist_to_polyline(poly, ba["x"], ba["y"])
+        self.assertGreaterEqual(d_anchor, d_pole - 1e-9)
 
     def test_guy_anchor_matches_stored_angle(self):
         r = engine.design(self.BEND)
@@ -346,8 +369,8 @@ class TestValidation(unittest.TestCase):
         ("angle_61", deflect(61.0)),
         ("angle_90", deflect(90.0, 100, 50, 50)),
         ("very_short_8", [(0.0, 0.0), (8.0, 0.0)]),
-        ("three_bends", [(0.0, 0.0), (60.0, 0.0), (60.0, 45.0), (110.0, 45.0),
-                         (110.0, 90.0), (150.0, 90.0)]),
+        ("three_bends", [(0.0, 0.0), (140.0, 0.0), (140.0, 120.0),
+                         (300.0, 120.0), (300.0, -30.0)]),
         ("tangent_edge_2", deflect(2.0)),
     ]
 
@@ -359,6 +382,20 @@ class TestValidation(unittest.TestCase):
             ]
             self.assertEqual(failures, [], msg=f"{name}: {failures}")
             self.assertTrue(r.ok, msg=name)
+
+    def test_close_facing_corners_report_failure_honestly(self):
+        # two right-angle corners only ~45 m apart facing each other: their
+        # inner break pair can't both fit MIN_SPACING, so no valid design
+        # exists -- the engine must FAIL the slack/max checks instead of
+        # dragging poles or anchors onto the road to make the numbers fit.
+        r = engine.design([(0.0, 0.0), (60.0, 0.0), (60.0, 45.0),
+                           (110.0, 45.0), (110.0, 90.0), (150.0, 90.0)])
+        labels = {row["label"]: row["status"] for row in r.validation}
+        self.assertEqual(labels.get("Slack Span บนช่วงโค้ง <= 20 m"), "FAIL")
+        self.assertEqual(labels.get("Max Span SAC 50 (40/35/25/20 m)"), "FAIL")
+        self.assertFalse(r.ok)
+        self.assertEqual(labels.get("สายยึดโยง + สมอบก GY-21"), "PASS")
+        self.assertEqual(labels.get("ห้ามปักเสาบนผิวจราจร"), "PASS")
 
     def test_validation_table_shape(self):
         r = engine.design([(0.0, 0.0), (150.0, 0.0)])

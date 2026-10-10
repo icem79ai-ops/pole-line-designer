@@ -228,13 +228,53 @@ class Polyline:
     def offset_point(
         self, s: float, offset: float, at_corner: bool = False
     ) -> tuple[float, float, float]:
-        """Offset a station sideways from the centerline using the 2D normal
-        vector n = [-v_y, v_x] of the local tangent."""
-        x, y, heading = self.position(s, at_corner)
-        a = math.radians(heading)
+        """Offset a station sideways from the centerline onto the R.O.W. line.
+
+        Every non-vertex station is offset perpendicular to its own local
+        segment, so the pole stands exactly ``offset`` away from the road it
+        runs alongside. A pole sitting exactly on a corner vertex is put on
+        the intersection of the two offset (R.O.W.) lines instead of the
+        bisector point: the bisector point only stands ``offset`` away from
+        the vertex, so its perpendicular distance to either adjoining road is
+        ``offset * cos(A/2)`` -- inside the corridor on a sharp inside bend.
+        The line intersection keeps the pole exactly ``offset`` from the road
+        on both runs. The returned heading still follows the corner bisector
+        at ``at_corner`` so the pole's bracket faces the bend.
+        """
+        s = float(np.clip(s, 0.0, self.total))
+        heading = self.corner_heading(s) if at_corner else self.heading_at(s)
+        i_cut = int(np.searchsorted(self.cum, s, side="left"))
+        on_vertex = 0 < i_cut < len(self.seg_len) and abs(s - float(self.cum[i_cut])) <= 1e-9
+        if on_vertex:
+            # any pole standing exactly on a centerline kink has no unambiguous
+            # local tangent, so it goes on the ROW corner: intersection of the
+            # two offset lines, exactly ``offset`` from both adjoining roads.
+            i = i_cut
+            u1v = self.pts[i] - self.pts[i - 1]
+            u2v = self.pts[i + 1] - self.pts[i]
+            l1, l2 = float(np.hypot(float(u1v[0]), float(u1v[1]))), float(
+                np.hypot(float(u2v[0]), float(u2v[1]))
+            )
+            if l1 > 1e-12 and l2 > 1e-12:
+                u1 = u1v / l1
+                u2 = u2v / l2
+                n1 = np.array([-u1[1], u1[0]])
+                n2 = np.array([-u2[1], u2[0]])
+                cross = float(u1[0] * u2[1] - u1[1] * u2[0])
+                det = -cross
+                if abs(det) > 1e-6:
+                    b = offset * (n2 - n1)
+                    lam = (-float(b[0]) * float(u2[1]) + float(u2[0]) * float(b[1])) / det
+                    p = self.pts[i] + offset * n1 + lam * u1
+                    return float(p[0]), float(p[1]), float(heading)
+        i = self.segment_index(s)
+        length = max(self.seg_len[i], 1e-12)
+        t = (s - float(self.cum[i])) / length
+        p = self.pts[i] + t * (self.pts[i + 1] - self.pts[i])
+        a = math.radians(self.heading_at(s))
         return (
-            float(x - offset * math.sin(a)),
-            float(y + offset * math.cos(a)),
+            float(p[0] - offset * math.sin(a)),
+            float(p[1] + offset * math.cos(a)),
             float(heading),
         )
 
@@ -492,6 +532,10 @@ def design(
         if r_b - r_a >= MIN_CORE:
             n = max(1, int(math.ceil((r_b - r_a) / MAX_TANGENT_SPAN - 1e-9)))
             for j in range(n + 1):
+                s = float(r_a + (r_b - r_a) * j / n)
+                # a fill pole may not sit on or within MIN_SPACING of an anchor
+                if abs(s - sa) < MIN_SPACING - 1e-9 or abs(s - sb) < MIN_SPACING - 1e-9:
+                    continue
                 role = "tangent"
                 if use_break_poles and j == 0:
                     # only a break pair around a real bend: on a gentle corner
@@ -509,7 +553,7 @@ def design(
                         and (sb - r_b) >= MIN_SPACING
                     ):
                         role = "break_close"
-                fills.append((float(r_a + (r_b - r_a) * j / n), role))
+                fills.append((s, role))
         else:
             warnings.append(
                 f"ช่วงระหว่างเสาบนช่วงโค้ง (chainage {sa:.1f} m ถึง {sb:.1f} m) สั้นเกินไป "
@@ -517,7 +561,8 @@ def design(
                 "(ผลตรวจสอบจะรายงานว่าไม่ผ่านเกณฑ์ Slack Span)"
             )
             n = max(1, int(math.ceil((sb - sa) / MAX_TANGENT_SPAN - 1e-9)))
-            for j in range(n + 1):
+            # interior stations only -- the anchors already cover the corners
+            for j in range(1, n):
                 fills.append((float(sa + (sb - sa) * j / n), "tangent"))
 
     first_s, last_s = poles[0]["station"], poles[-1]["station"]
@@ -526,15 +571,46 @@ def design(
             poles.append(make_pole(role, 0.0, s))
     poles.sort(key=lambda d: d["station"])
 
+    # collapse poles that came out closer than the working minimum: a fill must
+    # never crowd an anchor, two fills that bunched must merge into one, and
+    # two break poles (one isolating each end of a short run between corners)
+    # that tie themselves together collapse to the more structural one. The
+    # two end poles of a run shorter than MIN_SPACING are the one exception:
+    # terminal anchors always survive.
+    _PRIORITY = {
+        "start": 4,
+        "end": 4,
+        "ba": 4,
+        "curve": 4,
+        "break_open": 3,
+        "break_close": 3,
+    }
+    merged: list[dict] = []
+    for p in poles:
+        ptxt = _PRIORITY.get(p["code"], 1)
+        if (
+            merged
+            and math.hypot(p["x"] - merged[-1]["x"], p["y"] - merged[-1]["y"])
+            < MIN_SPACING - 1e-9
+        ):
+            prevtxt = _PRIORITY.get(merged[-1]["code"], 1)
+            if prevtxt == 4 and ptxt == 4:
+                merged.append(p)
+            elif ptxt > prevtxt:
+                merged[-1] = p
+            continue
+        merged.append(p)
+    poles = merged
+
     for idx, p in enumerate(poles, start=1):
         p["id"] = int(idx)
         p["marker"] = MARKER[p["code"]]
         p["color"] = COLOR[p["code"]]
 
-    # 3. every guy has to oppose the wire pull that actually acts on it, which
-    #    is what makes an end pole point away from the line instead of back
-    #    into it and an angle pole point at the outside of the bend.
-    _set_guy_angles(poles)
+    # 3. the guy runs parallel to the R.O.W. behind the pole (opposite the
+    #    shorter adjacent span) so its anchor stays on the pole's own side of
+    #    the road instead of being dragged across the carriageway.
+    _set_guy_angles(poles, pl)
 
     validation, ok = validate(pl, poles, offset, road_width, road_clearance)
     warnings += _collect_warnings(pl, poles, offset)
@@ -554,43 +630,81 @@ def design(
     )
 
 
-def _guy_direction_for(poles: list[dict], index: int):
+def _dist_to_polyline(pl: Polyline, x: float, y: float) -> float:
+    """Shortest distance from a world point to the road centerline segments."""
+    best = float("inf")
+    for i in range(len(pl.pts) - 1):
+        p0x, p0y = float(pl.pts[i][0]), float(pl.pts[i][1])
+        p1x, p1y = float(pl.pts[i + 1][0]), float(pl.pts[i + 1][1])
+        dx, dy = p1x - p0x, p1y - p0y
+        l2 = dx * dx + dy * dy
+        if l2 <= 1e-12:
+            continue
+        t = ((x - p0x) * dx + (y - p0y) * dy) / l2
+        t = min(1.0, max(0.0, t))
+        best = min(best, float(math.hypot(x - (p0x + t * dx), y - (p0y + t * dy))))
+    return best
+
+
+def _guy_direction_for(poles: list[dict], index: int, pl: Polyline | None = None):
     """Direction (degrees, world frame) in which the guy of poles[index] runs.
 
-    The anchor has to oppose the resultant of the wire tensions acting on the
-    pole, so it is the direction opposite to ``unit(pole->prev) +
-    unit(pole->next)``. At a dead end only one of the two terms exists, which
-    makes the anchor point straight away from the line; on an angle pole the two
-    terms bisect the bend from the outside.
+    The wire of the shorter of the two adjacent spans is the one pulling the
+    pole back along the R.O.W., so the anchor is placed parallel to that run.
+    A dead end has a single wire and its anchor runs ``heading + 180`` straight
+    away from it. An angle pole sits at the bend: there the R.O.W. carries on
+    into the shorter adjoining run, so a guy parallel to that run points
+    *toward* its neighbour -- heading + 0 -- which is the one direction that
+    keeps the anchor on the pole's own side instead of across the corner and
+    onto the carriageway.
+
+    Two guards keep the anchor clear of the road, the defect that motivated
+    the rule: the anchor must sit at least as far from the road centerline as
+    the pole itself, and when the shorter span cannot manage that the span
+    that keeps the anchor farthest off the road wins.
 
     Returns None when the pole is the only one (nothing to pull against).
     """
     p = poles[index]
     if len(poles) < 2:
         return None
-    vx = vy = 0.0
+    # a lone wire (dead end) is opposed head-on; at a bend the guy follows the
+    # run itself, so the two cases differ by the extra 180.
+    turn = 180.0 if (index == 0 or index == len(poles) - 1) else 0.0
+    back = []
     if index > 0:
         q = poles[index - 1]
-        length = math.hypot(q["x"] - p["x"], q["y"] - p["y"])
-        if length > 1e-9:
-            vx += (q["x"] - p["x"]) / length
-            vy += (q["y"] - p["y"]) / length
+        h = math.degrees(math.atan2(q["y"] - p["y"], q["x"] - p["x"]))
+        back.append((_pole_dist(p, q), (h + turn) % 360.0))
     if index < len(poles) - 1:
         q = poles[index + 1]
-        length = math.hypot(q["x"] - p["x"], q["y"] - p["y"])
-        if length > 1e-9:
-            vx += (q["x"] - p["x"]) / length
-            vy += (q["y"] - p["y"]) / length
-    resultant = math.hypot(vx, vy)
-    if resultant < 1e-9:
-        # the two tensions cancel exactly (the line doubles back): there is no
-        # net pull to oppose, so fall back to facing away from the next pole.
-        q = poles[min(index + 1, len(poles) - 1)]
-        return (math.degrees(math.atan2(p["y"] - q["y"], p["x"] - q["x"])) + 360.0) % 360.0
-    return (math.degrees(math.atan2(-vy, -vx)) + 360.0) % 360.0
+        h = math.degrees(math.atan2(q["y"] - p["y"], q["x"] - p["x"]))
+        back.append((_pole_dist(p, q), (h + turn) % 360.0))
+
+    def _offroad(angle: float) -> float:
+        if pl is None:
+            return 0.0
+        ax = p["x"] + math.cos(math.radians(angle)) * ANCHOR_LEN
+        ay = p["y"] + math.sin(math.radians(angle)) * ANCHOR_LEN
+        return _dist_to_polyline(pl, ax, ay)
+
+    min_len = min(d for d, _ in back)
+    short = [a for d, a in back if d <= min_len + 1e-9]
+    chosen = max(short, key=_offroad)
+    if pl is not None and len(back) > 1:
+        pole_offroad = _dist_to_polyline(pl, p["x"], p["y"])
+        # the anchor must not stand closer to the road than its own pole; if
+        # the shorter span would put it there, fall back to the farther cable.
+        if _offroad(chosen) < pole_offroad - 1e-9:
+            chosen = max((a for _, a in back), key=_offroad)
+    return chosen
 
 
-def _set_guy_angles(poles: list[dict]) -> None:
+def _pole_dist(a: dict, b: dict) -> float:
+    return float(math.hypot(b["x"] - a["x"], b["y"] - a["y"]))
+
+
+def _set_guy_angles(poles: list[dict], pl: Polyline) -> None:
     """Write the true guy direction and anchor block onto every guy pole."""
     for index, pole in enumerate(poles):
         if not pole["gy"]:
@@ -598,7 +712,7 @@ def _set_guy_angles(poles: list[dict]) -> None:
             pole["gy_anchor_x"] = None
             pole["gy_anchor_y"] = None
             continue
-        direction = _guy_direction_for(poles, index)
+        direction = _guy_direction_for(poles, index, pl)
         if direction is None:
             pole["gy_angle"] = 0.0
             pole["gy_anchor_x"] = None
@@ -690,27 +804,32 @@ def validate(
             ok_gy = False
         if p["gy"]:
             # Recompute the guy direction from the real pole geometry instead of
-            # trusting the stored angle: an anchor has to oppose the resultant
-            # wire pull, which validate() must be able to verify on any pole
-            # list, including one that came back from JSON or a CSV round trip.
-            expect = _guy_direction_for(poles, index)
+            # trusting the stored angle: validate() must be able to verify the
+            # anchor on any pole list, including one that came back from JSON
+            # or a CSV round trip.
+            expect = _guy_direction_for(poles, index, pl)
             if expect is None:
                 ok_gy = False
             elif abs(((p["gy_angle"] - expect + 180.0) % 360.0) - 180.0) > 1e-6:
                 ok_gy = False
         x0, y0, _ = pl.offset_point(
-            p["station"], 0.0, at_corner=p["code"] in ANGLE_CODES
+            p["station"], offset, at_corner=p["code"] in ANGLE_CODES
         )
-        if abs(float(math.hypot(p["x"] - x0, p["y"] - y0)) - offset) > 1e-6:
+        if math.hypot(p["x"] - x0, p["y"] - y0) > 1e-6:
             ok_offset = False
 
     if poles:
         if poles[0]["bracket"] != "(-O" or poles[-1]["bracket"] != "O-)":
             ok_bracket = False
 
-    # real road clearance: distance from the pole centre line to the edge of the
-    # road has to be at least road_clearance everywhere.
-    min_edge_clearance = float(offset) - float(road_width) / 2.0
+    # real road clearance: the actual distance of every pole to the centerline
+    # has to be at least half the road width plus the clearance. Measuring the
+    # geometry instead of trusting ``offset`` catches a corner pole that was
+    # pulled into the carriageway by the inside of the bend.
+    edge_clearances = [
+        _dist_to_polyline(pl, p["x"], p["y"]) - float(road_width) / 2.0 for p in poles
+    ]
+    min_edge_clearance = min(edge_clearances) if edge_clearances else 0.0
     ok_road = min_edge_clearance >= float(road_clearance) - 1e-6
 
     table = [
