@@ -216,6 +216,55 @@ class TestBreakPoleThreshold(unittest.TestCase):
         )
 
 
+def grouped_bend(deg1=18.0, sep=15.0, deg2=18.0, tail=200.0, leg=60.0):
+    """Two deflections in the same direction, the second corner ``sep``
+    metres after the first -- the building block of a sweeping curve."""
+    rad1 = math.radians(deg1)
+    rad2 = math.radians(deg1 + deg2)
+    p2 = (leg + sep * math.cos(rad1), sep * math.sin(rad1))
+    p3 = (p2[0] + tail * math.cos(rad2), p2[1] + tail * math.sin(rad2))
+    return [(0.0, 0.0), (leg, 0.0), p2, p3]
+
+
+class TestBreakPoleGrouping(unittest.TestCase):
+    """Corners within one slack span merge into a single bend group; its
+    deflection is summed, and one break pair flanks the whole group."""
+
+    def test_grouped_corners_share_one_break_pair(self):
+        r = engine.design(grouped_bend(18.0, 15.0, 18.0))
+        bo = [p for p in r.poles if p["code"] == "break_open"]
+        bc = [p for p in r.poles if p["code"] == "break_close"]
+        self.assertEqual(len(bo), 1, msg=[p["station"] for p in r.poles])
+        self.assertEqual(len(bc), 1)
+        corner_sts = [
+            p["station"] for p in r.poles
+            if p["code"] in ("curve", "ba") and p["angle"] > 0.0
+        ]
+        self.assertEqual(len(corner_sts), 2)
+        # entry break_close before the first corner, exit break_open after the last
+        self.assertLess(bc[0]["station"], corner_sts[0])
+        self.assertGreater(bo[0]["station"], corner_sts[-1])
+        self.assertTrue(r.ok, msg=[w for w in r.warnings])
+
+    def test_corners_beyond_one_slack_span_do_not_group(self):
+        r = engine.design(grouped_bend(18.0, 60.0, 18.0))
+        codes = [p["code"] for p in r.poles]
+        self.assertNotIn("break_open", codes)
+        self.assertNotIn("break_close", codes)
+
+    def test_grouped_sum_below_threshold_keeps_no_breaks(self):
+        r = engine.design(grouped_bend(12.0, 15.0, 14.0))
+        codes = [p["code"] for p in r.poles]
+        self.assertNotIn("break_open", codes)
+        self.assertNotIn("break_close", codes)
+
+    def test_single_sharp_corner_keeps_its_own_pair(self):
+        r = engine.design(deflect(45.0))
+        codes = [p["code"] for p in r.poles]
+        self.assertIn("break_open", codes)
+        self.assertIn("break_close", codes)
+
+
 class TestRoadClearance(unittest.TestCase):
     STRAIGHT = [(0.0, 0.0), (200.0, 0.0)]
 
@@ -371,6 +420,7 @@ class TestValidation(unittest.TestCase):
         ("very_short_8", [(0.0, 0.0), (8.0, 0.0)]),
         ("three_bends", [(0.0, 0.0), (140.0, 0.0), (140.0, 120.0),
                          (300.0, 120.0), (300.0, -30.0)]),
+        ("grouped_sweep", grouped_bend(18.0, 15.0, 18.0)),
         ("tangent_edge_2", deflect(2.0)),
     ]
 

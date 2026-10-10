@@ -449,34 +449,55 @@ def design(
         )
 
     # 1. fixed anchor poles: both dead ends + every structure on a corner.
-    #    break poles are only worth adding around a real bend, so each corner
-    #    records whether it qualifies for them.
-    anchors: list[dict] = [
-        {"s": 0.0, "role": "start", "angle": 0.0, "break_ok": False}
-    ]
+    #    Consecutive corners within one slack span of each other form a single
+    #    bend group: the side pull of a long sweeping curve is carried by the
+    #    whole group, not by any one gentle corner. Break poles therefore flank
+    #    the group as a whole -- a break_close before its first corner, a
+    #    break_open after its last -- and the group qualifies whenever the sum
+    #    of its deflections reaches the break threshold.
+    groups: list[list[dict]] = []
     for c in corners:
-        angle = float(c["angle"])
-        anchors.append(
-            {
-                "s": float(c["station"]),
-                "role": "ba" if angle > 60.0 else "curve",
-                "angle": angle,
-                "break_ok": angle >= ANGLE_BREAK_MIN,
-            }
-        )
+        if (
+            groups
+            and c["station"] - groups[-1][-1]["station"] <= MAX_SLACK_SPAN + 1e-6
+        ):
+            groups[-1].append(c)
+        else:
+            groups.append([c])
+    anchors: list[dict] = [
+        {"s": 0.0, "role": "start", "angle": 0.0, "bc": False, "bo": False}
+    ]
+    for g in groups:
+        has_breaks = sum(float(c["angle"]) for c in g) >= ANGLE_BREAK_MIN
+        for i, c in enumerate(g):
+            angle = float(c["angle"])
+            anchors.append(
+                {
+                    "s": float(c["station"]),
+                    "role": "ba" if angle > 60.0 else "curve",
+                    "angle": angle,
+                    # entry break_close sits before the group, exit break_open
+                    # after it; interior corners of the group carry neither.
+                    "bc": has_breaks and i == 0,
+                    "bo": has_breaks and i == len(g) - 1,
+                }
+            )
     if anchors[-1]["role"] in ANGLE_CODES and pl.total - anchors[-1]["s"] < MIN_SPACING:
         anchors[-1] = {
             "s": pl.total,
             "role": "end",
             "angle": 0.0,
-            "break_ok": False,
+            "bc": False,
+            "bo": False,
         }
         warnings.append(
             "จุดหักมุมอยู่ใกล้ปลายสายมาก (น้อยกว่า "
             f"{MIN_SPACING:.0f} m) จึงยุบรวมเป็นเสาดับสายปลายทาง (End Deadend) แทนเสาหักมุม"
         )
     else:
-        anchors.append({"s": pl.total, "role": "end", "angle": 0.0, "break_ok": False})
+        anchors.append(
+            {"s": pl.total, "role": "end", "angle": 0.0, "bc": False, "bo": False}
+        )
     anchors = [
         a
         for i, a in enumerate(anchors)
@@ -541,25 +562,33 @@ def design(
                     # only a break pair around a real bend: on a gentle corner
                     # the angle pole itself already carries the side pull.
                     if (
-                        anchors[k]["break_ok"]
+                        anchors[k]["bo"]
                         and r_a > sa + 1e-6
                         and (r_a - sa) >= MIN_SPACING
                     ):
                         role = "break_open"
                 elif use_break_poles and j == n:
                     if (
-                        anchors[k + 1]["break_ok"]
+                        anchors[k + 1]["bc"]
                         and r_b < sb - 1e-6
                         and (sb - r_b) >= MIN_SPACING
                     ):
                         role = "break_close"
                 fills.append((s, role))
         else:
-            warnings.append(
-                f"ช่วงระหว่างเสาบนช่วงโค้ง (chainage {sa:.1f} m ถึง {sb:.1f} m) สั้นเกินไป "
-                f"จึงยังคงช่วงหลักไว้ที่ {MAX_TANGENT_SPAN:.0f} m "
-                "(ผลตรวจสอบจะรายงานว่าไม่ผ่านเกณฑ์ Slack Span)"
+            # two corners inside the same bend group are spaced one slack span
+            # apart by construction -- that interior gap is fine, not a fault.
+            grouped = (
+                a["code"] in ANGLE_CODES
+                and b["code"] in ANGLE_CODES
+                and b["station"] - a["station"] <= MAX_SLACK_SPAN + 1e-6
             )
+            if not grouped:
+                warnings.append(
+                    f"ช่วงระหว่างเสาบนช่วงโค้ง (chainage {sa:.1f} m ถึง {sb:.1f} m) สั้นเกินไป "
+                    f"จึงยังคงช่วงหลักไว้ที่ {MAX_TANGENT_SPAN:.0f} m "
+                    "(ผลตรวจสอบจะรายงานว่าไม่ผ่านเกณฑ์ Slack Span)"
+                )
             n = max(1, int(math.ceil((sb - sa) / MAX_TANGENT_SPAN - 1e-9)))
             # interior stations only -- the anchors already cover the corners
             for j in range(1, n):
@@ -735,10 +764,13 @@ def _collect_warnings(pl: Polyline, poles: list[dict], offset: float) -> list[st
                 f"เกิน {MAX_SLACK_SPAN:.0f} m ตามเกณฑ์ SAC 50"
             )
         if a["code"] in ANGLE_CODES and b["code"] in ANGLE_CODES:
-            out.append(
-                f"เสาหักมุม #{a['id']} และ #{b['id']} อยู่ใกล้กันเกินไป "
-                "ควรพิจารณารวมจุดหักหรือเลื่อนแนวเส้นทาง"
-            )
+            # two corners within one slack span are a single bend group by the
+            # grouping rule -- expected, not a fault
+            if b["station"] - a["station"] > MAX_SLACK_SPAN + 1e-6:
+                out.append(
+                    f"เสาหักมุม #{a['id']} และ #{b['id']} อยู่ใกล้กันเกินไป "
+                    "ควรพิจารณารวมจุดหักหรือเลื่อนแนวเส้นทาง"
+                )
     if len(poles) < 2:
         out.append("จำนวนเสาน้อยกว่า 2 ต้น กรุณาตรวจสอบความยาวแนวเส้นทาง")
     return out
@@ -1027,9 +1059,10 @@ def standards_reference() -> dict:
             "เสาทุกต้นบนช่วงโค้งต้องเป็นเสาทางโค้ง (SA/MA/LA) หรือเสาหักศอก (BA)",
             "Slack Span บนช่วงโค้งต้องไม่เกิน "
             f"{MAX_SLACK_SPAN:.0f} m (วัดเป็นระยะสายจริง)",
-            f"เสาเบรก (Break) คู่หน้าหลังมุมใช้เฉพาะมุมเบี่ยงเบน ≥ "
-            f"{ANGLE_BREAK_MIN:.0f} องศา และต้องมีระยะตั้งเสาแทรกอย่างน้อย "
-            f"{MIN_SPACING:.0f} m โค้งอ่อนไม่ต้องใช้",
+            "เสาเบรก (Break) คู่หน้า/หลังโค้งใช้เมื่อมุมที่โค้งนั้นเบี่ยงเบนรวม ≥ "
+            f"{ANGLE_BREAK_MIN:.0f} องศา โดยมุมหักต่อเนื่องที่ห่างกันไม่เกิน "
+            f"{MAX_SLACK_SPAN:.0f} m ถือเป็นโค้งเดียวกัน (นับมุมสะสม) "
+            f"และต้องมีระยะตั้งเสาแทรกอย่างน้อย {MIN_SPACING:.0f} m โค้งอ่อนไม่ต้องใช้",
             "สมอบกและสายยึดโยงต้องชี้ทวนแรงดึงจริงของสาย "
             "(เสาดับสายปลายทางชี้ออกไปทางปลายสาย ไม่ใช่ย้อนกลับเข้าไปในสาย)",
             "สายยึดโยงของเสาหักมุมชี้ที่มุมภายนอกของแนวโค้ง "
